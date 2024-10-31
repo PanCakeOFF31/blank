@@ -1,14 +1,25 @@
+
+/**
+ * @class
+ * @name Blank
+ * @method getJsonRequest
+ * @method getJsonResponse
+ * @method resHasKeys
+ */
 Blank = class {
 
     constructor(pm) {
         this.pm = pm;
     }
 
+    /**
+     * @method
+     */
     getJsonResponse() {
         const pm = this.pm;
         const responseText = pm.response.text();
 
-        this.#expectJSON(responseText, "[Response] Body must be JSON-body")
+        this.#expectJSON(responseText, "[Response] Body must be JSON-body");
         return JSON.parse(responseText);
     }
 
@@ -20,67 +31,109 @@ Blank = class {
         return JSON.parse(requestText);
     }
 
+    checkEndpoint(method = "GET") {
+        const pm = this.pm;
+
+        pm.test("Has connection and any status code except 404", ()=> {
+            pm.expect(pm.response.code).is.not.equal(404);
+            this.#expectMethod(method)
+        });
+    }
+
     /**
-     * @param entries [[key, value, type, size]]
+     * @param {object} json
+     */
+    #expectKeys(entries, json) {
+        for (const entry of entries) {
+            console.log("entry:", entry)
+            let key = null, value = null, type = null, size = null;
+
+            if (this.#isArray(entry)) {
+                console.log("Обработка сценария с массивом");
+                [key = null, value = null, type = null, size = null] = entry;
+            } else if (this.#isObject(entry)){
+                console.log("Обработка сценария с объектом");
+                ({key = null, value = null, type = null, size = null} = entry);
+            } else if (this.#isString(entry)){
+                console.log("Обработка сценария со строкой");
+                key = entry;
+            } else {
+                pm.expect.fail(`Недопустимый тип данных: ${entry}`)
+            }
+
+            console.log("Ожидаемые значения:", key, value, type, size);
+
+            // Просто проверка ключа
+            if (value === null && type === null) {
+                pm.expect(json).to.have.nested.property(key);
+                continue;
+            }
+
+            // Если есть значение и тип
+            if (value !== null && type !== null) {
+                pm.expect(json).to.have.nested.property(key, value);
+                pm.expect(this.#getNestedKey(json, key)).is.an(type);
+
+                if (type === "array" || type === "string") {
+                    if (size !== null) {
+                        pm.expect(this.#getNestedKey(json, key)).to.have.lengthOf(size);
+                    }
+                }
+                continue;
+            }
+
+            // Если не значения, то можно проверить спокойно тип
+            if (type !== null) {
+                pm.expect(json).to.have.nested.property(key);
+                pm.expect(this.#getNestedKey(json, key)).is.an(type);
+
+                if (type === "array" || type === "string") {
+                    if (size !== null) {
+                        pm.expect(this.#getNestedKey(json, key)).to.have.lengthOf(size);
+                    }
+                }
+            }
+
+            // Без указания типа, размер даже не смотрится
+            if (value !== null) {
+                pm.expect(json).to.have.nested.property(key, value);
+            }
+        }
+    }
+
+    reqHasKeys(entries, testName = "[Request] Json request has properties") {
+        const pm = this.pm;
+        const request = this.getJsonRequest();
+
+        pm.test(testName, () => {
+            this.#expectKeys(entries, request);
+        })
+    }
+
+
+    /**
+     * ### Проверка ключей json ответа
+     * @method
+     * @name resHasKeys
+     *
+     * Ожидаемые аргументы функции:
+     *
+     * @param {Array<Array<any>>} entries массив массивов (записи), где
+     * каждый подмассив содержим:
+     * - `key` (string): Ключ
+     * - `value` (any, optional): Значение ключа
+     * - `type` (string, optional): Тип значения
+     * - `size` (number, optional): Размер значения (для type: "string"/"array")
+     * @param {Array<string>} entries массив строк-ключей
+     * @param {string}testName "[Request] Json request has properties"
      */
     resHasKeys(entries, testName = "[Request] Json request has properties") {
         const pm = this.pm;
-        const request = this.getJsonResponse();
+        const response = this.getJsonResponse();
 
-        if (Array.isArray(entries[0])) {
-            pm.test(testName, () => {
-                for (const entry of entries) {
-                    console.log("Проверка entry:", entry);
-
-                    const [key, value = null, type = null, size = null] = entry;
-                    console.log("Ожидаемые значения:", key, value, type, size);
-
-                    // Просто проверка ключа
-                    if (value === null && type === null) {
-                        pm.expect(request).to.have.nested.property(key);
-                        continue;
-                    }
-
-                    // Если есть значение и тип
-                    if (value !== null && type !== null) {
-                        pm.expect(request).to.have.nested.property(key, value);
-                        pm.expect(this.#getNestedKey(request, key)).is.an(type);
-
-                        if (type === "array" || type === "string") {
-                            if (size !== null) {
-                                pm.expect(this.#getNestedKey(request, key)).to.have.lengthOf(size);
-                            }
-                        }
-                        continue;
-                    }
-
-                    // Если не значения, то можно проверить спокойно тип
-                    if (type !== null)  {
-                        pm.expect(request).to.have.nested.property(key);
-                        pm.expect(this.#getNestedKey(request, key)).is.an(type);
-
-                        if (type === "array" || type === "string") {
-                            if (size !== null) {
-                                pm.expect(this.#getNestedKey(request, key)).to.have.lengthOf(size);
-                            }
-                        }
-                    }
-
-                    // Без указания типа, размер даже не смотрится
-                    if (value !== null) {
-                        pm.expect(request).to.have.nested.property(key, value);
-                    }
-                }
-            })
-        } else {
-            pm.test(testName, () => {
-                 for (const key of entries) {
-                    pm.expect(request).to.have.nested.property(key);
-                 }
-            });
-        }
-
-
+        pm.test(testName, () => {
+            this.#expectKeys(entries, response);
+        })
     }
 
     #getNestedKey(obj, path) {
@@ -126,6 +179,30 @@ Blank = class {
         }
     }
 
+    #isObject(value) {
+        if (typeof value === "object") {
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    #isArray(value) {
+        if (Array.isArray(value)) {
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    #isString(value) {
+        if (typeof value === "string") {
+            return true;
+        } else {
+            return false;
+        }
+    }
+
     #expectJSON(content = null, message = "Expected JSON") {
         const pm = this.pm;
 
@@ -134,6 +211,10 @@ Blank = class {
         } catch (e) {
             pm.expect.fail(message);
         }
+    }
+
+    resHasCode(expectedStatus, testName = null) {
+        this.resHasStatus(expectedStatus, testName)
     }
 
     resHasStatus(expectedStatus, testName = null) {
@@ -193,7 +274,7 @@ Blank = class {
                 }
             } else if (Array.isArray(status)) {
                 pm.expect(pm.response.code).to.be.oneOf(status)
-            } else  {
+            } else {
                 pm.response.to.have.status(status);
             }
         }
@@ -345,7 +426,7 @@ Blank = class {
             pm.expect(jsonText, "Body must not be empty").is.not.empty;
 
             if (json) {
-                 this.#expectJSON(jsonText, "Body must be JSON-body")
+                this.#expectJSON(jsonText, "Body must be JSON-body")
             } else {
                 pm.expect(this.#isJSON(jsonText), "Must not be JSON body").is.false;
             }
@@ -406,10 +487,10 @@ Blank = class {
     #expectContent(content, json, contentText) {
         const pm = this.pm;
 
-         if (content !== null) {
+        if (content !== null) {
             if (content) {
                 // Если есть содержимое, значит должен быть и тело ответа
-                    pm.expect(contentText, "Body must not be empty").is.not.empty;
+                pm.expect(contentText, "Body must not be empty").is.not.empty;
 
                 // Если JSON-содержимое ответа то:
                 if (json) {
@@ -427,7 +508,7 @@ Blank = class {
                     pm.expect(contentText, "Content is different").is.eql(content)
                 }
             } else {
-                    pm.expect(contentText, "Body must not be empty").is.empty;
+                pm.expect(contentText, "Body must not be empty").is.empty;
             }
         }
     }
