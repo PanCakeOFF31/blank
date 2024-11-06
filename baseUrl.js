@@ -17,9 +17,7 @@ function form_url() {
         pm.collectionVariables.set("basePrefix", "");
     }
 
-    let basePrefix = pm.collectionVariables.get("basePrefix");
-
-    let baseUrl = baseHost + ":" + basePort + basePrefix;
+    let baseUrl = baseHost + ":" + basePort;
     pm.collectionVariables.set("baseUrl", baseUrl);
 
     console.info("Collection pre-request script. Formed baseUrl:", baseUrl);
