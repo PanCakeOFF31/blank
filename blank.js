@@ -49,19 +49,20 @@ Blank = class {
             pattern = p;
         }
 
-
-        this.#expectConnection(method);
-        this.#expectPath(pattern);
+        pm.test("[Request] Has connection, method and any status code except 404", () => {
+            this.#expectConnection(method);
+        });
+        pm.test("[Request] Url path matches to pattern", () => {
+            this.#expectPath(pattern);
+        });
     }
 
     #expectConnection(method) {
         const pm = this.pm;
 
         if (method !== null) {
-            pm.test("Has connection, method and any status code except 404", () => {
-                pm.expect(pm.response.code).is.not.equal(404);
-                this.#expectMethod(method)
-            });
+            pm.expect(pm.response.code).is.not.equal(404);
+            this.#expectMethod(method)
         }
     }
 
@@ -69,20 +70,18 @@ Blank = class {
         const pm = this.pm;
 
         if (pattern !== null) {
-            pm.test("[Request] Url path matches to pattern", () => {
-                const basePrefix = pm.collectionVariables.get("basePrefix");
-                const formedPattern = `\^/${basePrefix}${pattern}\$`;
-                console.log("Formed pattern:", formedPattern);
-                const re = new RegExp(formedPattern);
-                pm.expect(re.test(pm.request.url.getPath()), "Путь запроса не соответсвует паттерну").is.true;
-            });
+            const basePrefix = pm.collectionVariables.get("basePrefix");
+            const formedPattern = `\^/${basePrefix}${pattern}\$`;
+            console.log("Formed pattern:", formedPattern);
+            const re = new RegExp(formedPattern);
+            pm.expect(re.test(pm.request.url.getPath()), "Путь запроса не соответсвует паттерну").is.true;
         }
     }
 
     /**
      * @param {object} json
      */
-    #expectKeys(entries, json) {
+    #expectKeys(entries, json, subkey) {
         const pm = this.pm;
 
         for (const entry of entries) {
@@ -168,7 +167,7 @@ Blank = class {
      * @param {Array<string>} entries массив строк-ключей
      * @param {string}testName "[Request] Json request has properties"
      */
-    resHasKeys(entries, testName = "[Response] Json request has properties") {
+    resHasKeys(entries, subkey, testName = "[Response] Json response has properties") {
         const pm = this.pm;
         const response = this.getJsonResponse();
 
@@ -177,12 +176,76 @@ Blank = class {
         })
     }
 
-    resHasKeysInclusive(expected, with_value = false, testName = "[Response] TESTING") {
+    resHasInclusiveKeys(expected, subkey = null, testName = "[Response] Response keys inclusive") {
         const pm = this.pm;
         const response = this.getJsonResponse();
 
         pm.test(testName, () => {
-            const result = this.#hasInclusiveDifference(expected, response, with_value);
+            const result = this.#hasKeyDifference(expected, response, "", true, subkey);
+            if (typeof result === "string") {
+                pm.expect.fail("Invalid key: " + result);
+            }
+        })
+    }
+
+    reqHasInclusiveKeys(expected, subkey = null, testName = "[Request] Request keys inclusive") {
+        const pm = this.pm;
+        const response = this.getJsonRequest();
+
+        pm.test(testName, () => {
+            const result = this.#hasKeyDifference(expected, response, "", true, subkey);
+            if (typeof result === "string") {
+                pm.expect.fail("Invalid key: " + result);
+            }
+        })
+    }
+
+    // up bounded keys
+    reqHasBoundedKeys(expected, subkey = null, testName = "[Request] Request keys up bounded") {
+        const pm = this.pm;
+        const response = this.getJsonRequest();
+
+        pm.test(testName, () => {
+            const result = this.#hasKeyDifference(expected, response, "", false, subkey, true);
+            if (typeof result === "string") {
+                pm.expect.fail("Invalid key: " + result);
+            }
+        })
+    }
+
+    // up bounded keys
+    resHasBoundedKeys(expected, subkey = null, testName = "[Response] Response keys up bounded") {
+        const pm = this.pm;
+        const response = this.getJsonResponse();
+
+        pm.test(testName, () => {
+            const result = this.#hasKeyDifference(expected, response, "", false, subkey, true);
+            if (typeof result === "string") {
+                pm.expect.fail("Invalid key: " + result);
+            }
+        })
+    }
+
+    // up bounded keys
+    reqHasDownBoundedKeys(expected, subkey = null, testName = "[Request] Request keys from below bounded") {
+        const pm = this.pm;
+        const response = this.getJsonRequest();
+
+        pm.test(testName, () => {
+            const result = this.#hasKeyDifference(expected, response, "", false, subkey, false);
+            if (typeof result === "string") {
+                pm.expect.fail("Invalid key: " + result);
+            }
+        })
+    }
+
+    // up bounded keys
+    resHasDownBoundedKeys(expected, subkey = null, testName = "[Response] Response keys from below bounded") {
+        const pm = this.pm;
+        const response = this.getJsonResponse();
+
+        pm.test(testName, () => {
+            const result = this.#hasKeyDifference(expected, response, "", false, subkey, false);
             if (typeof result === "string") {
                 pm.expect.fail("Invalid key: " + result);
             }
@@ -255,6 +318,34 @@ Blank = class {
             return false;
         }
     }
+
+
+    #isUndefined(value) {
+        if (value === undefined) {
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+
+    #isNull(value) {
+        if (value === null) {
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+
+    #isNullOrUndefined(value) {
+        if (value === undefined || value === null) {
+            return true;
+        } else {
+            return false;
+        }
+    }
+
 
     #expectJSON(content = null, message = "Expected JSON") {
         const pm = this.pm;
@@ -638,12 +729,17 @@ Blank = class {
      *
      * При проверке с учетом значения, проверяются сначала наличие всех ключей,
      * а только потом значений.
+     *
+     *  isInclusive, subkey, ontop - захватываются
      */
-    #hasInclusiveDifference(expected, actual, with_value = false, path = "") {
+    #hasKeyDifference(expected, actual, path, isInclusive, subkey, onTop = true) {
+        const formPath = (p, k, v) => {
+            if (!this.#isNullOrUndefined(subkey) && subkey !== k) {
+                p = subkey
+            }
 
-        const formPath = (p, k, v = null) => {
             if (p === "") {
-                if (with_value && v !== null) {
+                if (v !== undefined) {
                     if (this.#isArrayFlag) {
                         this.#isArrayFlag = false;
                         return "[" + k + "]:" + v
@@ -658,7 +754,7 @@ Blank = class {
                     }
                 }
             } else {
-                if (with_value && v !== null) {
+                if (v !== undefined) {
                     if (this.#isArrayFlag) {
                         this.#isArrayFlag = false;
                         return p + k + "]:" + v;
@@ -681,49 +777,146 @@ Blank = class {
             }
         }
 
+        if (!this.#isNullOrUndefined(subkey)) {
+            actual = this.#getNestedKey(actual, subkey)
+
+            if (this.#isNullOrUndefined(actual)) {
+                return formPath(path, subkey, "_required");
+            }
+        }
+
+        function isServiceObejct(obj) {
+            const serviceKeys = ["_value", "_type", "_size", "_isRequired"];
+            const objectKeys = Object.keys(obj);
+
+            return serviceKeys.some(serviceKey => objectKeys.includes(serviceKey))
+        }
+
         const expectedKeys = Object.keys(expected);
         const actualKeys = Object.keys(actual);
+
 
         const expectedLength = expectedKeys.length;
         const actualLength = actualKeys.length;
 
-        if (expectedLength !== actualLength) {
-            if (expectedLength > actualLength) {
-                for (const key of expectedKeys) {
-                    if (!actualKeys.includes(key)) {
-                        return formPath(path, key);
+
+        if (isInclusive) {
+            if (expectedLength !== actualLength) {
+                if (expectedLength > actualLength) {
+                    for (const key of expectedKeys) {
+                        if (!actualKeys.includes(key)) {
+                            return formPath(path, key, "_required");
+                        }
+                    }
+                } else {
+                    for (const key of actualKeys) {
+                        if (!expectedKeys.includes(key)) {
+                            return formPath(path, key, "_required");
+                        }
                     }
                 }
-            } else {
+            }
+        } else {
+            if (onTop && actualLength > expectedLength) {
                 for (const key of actualKeys) {
                     if (!expectedKeys.includes(key)) {
-                        return formPath(path, key);
+                        return formPath(path, key, "_required");
                     }
                 }
             }
         }
 
         for (const key of expectedKeys) {
-            if (!actualKeys.includes(key)) {
-                return formPath(path, key)
+            if (isInclusive) {
+                if (!actualKeys.includes(key)) {
+                    return formPath(path, key, "_required")
+                }
+            } else {
+                let difference;
+
+                if (onTop) {
+                    difference = actualKeys.filter(item => !expectedKeys.includes(item));
+                } else {
+                    difference = expectedKeys.filter(item => !actualKeys.includes(item));
+                }
+
+                if (difference.length > 0) {
+                    return formPath(path, difference[0], "_required")
+                }
             }
 
             const expectedValue = expected[key];
             const actualValue = actual[key];
 
-            if (typeof expectedValue === 'object' && expectedValue !== null && typeof actualValue === 'object' && actualValue !== null) {
-                let recursiveResult;
-                if (Array.isArray(expectedValue) && Array.isArray(actualValue)) {
-                    this.#isArrayFlag = true;
-                    recursiveResult = this.#hasInclusiveDifference(expectedValue, actualValue, with_value, formPath(path, key));
-                } else {
-                    recursiveResult = this.#hasInclusiveDifference(expectedValue, actualValue, with_value, formPath(path, key));
+            if (typeof expectedValue === 'object' && expectedValue !== null) {
+                const stringifyiedExpectedValue = JSON.stringify(expectedValue);
+                const stringifyiedActualValue = JSON.stringify(actualValue);
+
+                if (stringifyiedExpectedValue === "{}" ||
+                    stringifyiedExpectedValue === "[]") {
+                    if (stringifyiedExpectedValue !== stringifyiedActualValue) {
+                        return formPath(path, key, stringifyiedExpectedValue);
+                    } else {
+                        continue;
+                    }
                 }
 
-                if (typeof recursiveResult === "string") {
-                    return recursiveResult;
+                if (isServiceObejct(expectedValue)) {
+                    const {
+                        _value = undefined,
+                        _type = undefined,
+                        _size = undefined,
+                        _isRequired = undefined
+                    } = expectedValue;
+
+                    if (!isInclusive && _isRequired !== undefined) {
+                        if (_isRequired && actualValue === undefined) {
+                            return formPath(path, key, "_required:");
+                        }
+                    }
+
+                    if (_value !== undefined) {
+                        if (_value !== actualValue) {
+                            return formPath(path, key, _value);
+                        }
+                    }
+
+                    if (_type !== undefined) {
+                        if (_type === "array") {
+                            if (!this.#isArray(actualValue)) {
+                                return formPath(path, key, "_type:" + _type);
+                            }
+                        } else if (_type !== typeof actualValue) {
+                            return formPath(path, key, "_type:" + _type);
+                        }
+                    }
+
+                    if (_size !== undefined) {
+                        if (!(typeof actualValue === "string" ||
+                            this.#isArray(actualValue))) {
+                            return formPath(path, key, "_type_size" + typeof actualValue);
+                        }
+
+                        if (_size !== actualValue.length) {
+                            arrayarray
+                            return formPath(path, key, "_size:" + _size);
+                        }
+                    }
+                } else if (typeof actualValue === 'object' && actualValue !== undefined) {
+
+                    let recursiveResult;
+                    if (Array.isArray(expectedValue) && Array.isArray(actualValue)) {
+                        this.#isArrayFlag = true;
+                        recursiveResult = this.#hasKeyDifference(expectedValue, actualValue, formPath(path, key));
+                    } else {
+                        recursiveResult = this.#hasKeyDifference(expectedValue, actualValue, formPath(path, key));
+                    }
+
+                    if (typeof recursiveResult === "string") {
+                        return recursiveResult;
+                    }
                 }
-            } else if (with_value) {
+            } else if (expectedValue !== null) {
                 if (expectedValue !== actualValue) {
                     return formPath(path, key, expectedValue)
                 }
@@ -731,5 +924,50 @@ Blank = class {
         }
 
         return false;
+    }
+
+    expectResponseKey(descriptor = null) {
+        this.resHasKeys([
+            {
+                ...descriptor
+            }
+        ], "[Response] Expect the key");
+    }
+
+    expectDefaultApiResponse() {
+        this.resHasInclusiveKeys({
+            status: {
+                _value: "s",
+                _type: "string"
+            },
+            data: {
+                _type: "object"
+            },
+            objects: {
+                _type: "array"
+            },
+            messages: {
+                _type: "object"
+            }
+        }, null, "[Response] Expect the default api response structure");
+    }
+
+    // dtoType or descriptor
+    expectResponseDtoType(dtoType = null) {
+        if (this.#isObject(dtoType)) {
+            this.resHasKeys([
+                {
+                    key: "data.type",
+                    ...dtoType
+                }
+            ], null, "[Response] Expect the response dto type")
+        } else {
+            this.resHasKeys([
+                {
+                    key: "data.type",
+                    value: dtoType,
+                }
+            ], null, "[Response] Expect the response dto type");
+        }
     }
 }
